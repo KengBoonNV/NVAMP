@@ -353,8 +353,31 @@ function nodeStatus(m,code){ const sub=compSubtree(m,code); let worst="Running";
 function deriveStatus(m){ if(!m.rollup) return null; const down=[],deg=[];
   flatComps(m).filter(isLeaf).forEach(c=>{ const st=modStatus(m,c.code); if(st==="Running") return; const t1=tier1Of(m,c.code); const crit=!(t1&&t1.node.critical===false);
     if(st==="Down"&&crit) down.push(c.code+" down"); else deg.push(c.code+(st==="Down"?" down":" running with issues")); });
+  const wip=D.wos.filter(w=>w.machineId===m.id&&w.status==="In progress");
+  if(wip.length) return {status:"Maintenance", reason:"work order "+wip.map(w=>w.id).join(", ")+" in progress"};
   return {status:down.length?"Down":deg.length?"Degraded":"Running", reason:[...down,...deg].join(", ")}; }
 const isAuto = m => !!m.rollup && m.statusMode!=="manual";
+/* Machine status follows its work orders. A work order going In progress (on the machine or one of its
+   modules) puts the machine under Maintenance. When it completes and no other work order on that machine
+   is in progress, the module it was on goes back to Running and the machine returns to Running (for a
+   machine on automatic status: to whatever its other modules say). A work order on hold keeps the machine
+   under Maintenance. Returns {ops, msg} to add to the work order's own save. */
+function woMachineOps(w,next){ const m=M(w.machineId); const none={ops:[],msg:""}; if(!m||!isLive(m)) return none;
+  const t=new Date().toISOString(), where=w.component?" on "+compShort(m,w.component):"";
+  const ev=(status,note,extra)=>()=>db.collection("events").add(Object.assign({t,machineId:m.id,status,note,byId:ME,byName:"",woId:w.id},extra||{}));
+  if(next==="In progress"){ if(m.status==="Maintenance") return none; const note=`Work order ${w.id} in progress${where}`;
+    return {ops:[updDoc("machines/"+m.id,{status:"Maintenance",note,statusSince:t,updatedBy:ME,maintWO:w.id,preMaintStatus:m.status}),ev("Maintenance",note)],msg:` · ${m.name} under maintenance`}; }
+  if(next==="Completed"){ if(D.wos.some(x=>x.machineId===m.id&&x.id!==w.id&&x.status==="In progress")) return none;
+    const upd={}, ops=[], note=`Work order ${w.id} completed${where}`;
+    if(w.component){ const sub=compSubtree(m,w.component); const cs={}; flatComps(m).forEach(c=>{ if(sub.has(c.code)&&isLeaf(c)&&modStatus(m,c.code)!=="Running") cs[c.code]={status:"Running",note,since:t,by:ME}; });
+      if(Object.keys(cs).length){ upd.compStatus=cs; Object.keys(cs).forEach(code=>ops.push(ev("Running",note,{component:code}))); } }
+    if(m.status!=="Maintenance"&&!upd.compStatus) return none;
+    let back="Running", why=note;
+    if(isAuto(m)){ const m2=Object.assign({},m,{compStatus:Object.assign({},m.compStatus||{},upd.compStatus||{})}); const wosSave=D.wos; D.wos=D.wos.filter(x=>x.id!==w.id); const d=deriveStatus(m2); D.wos=wosSave; if(d){ back=d.status; if(d.reason) why=note+" · Auto: "+d.reason; } }
+    if(m.status==="Maintenance"||isAuto(m)){ if(back!==m.status){ Object.assign(upd,{status:back,statusSince:t,updatedBy:ME,maintWO:null}); ops.push(ev(back,why)); } upd.note=why; }
+    if(!Object.keys(upd).length) return none;
+    return {ops:[updDoc("machines/"+m.id,upd),...ops],msg:upd.status?` · ${m.name} back to ${stLabel(upd.status)}`:""}; }
+  return none; }
 const modDot = st => st==="Running"?"":` ${pill(st==="Down"?"s-crit":"s-warn",st)}`;
 async function setModuleStatus(m,code,st,note){
   const t=new Date().toISOString(); const entry={status:st,note,since:t,by:ME};
@@ -1552,7 +1575,8 @@ function woDetail(id){
         lab.textContent=L0; if(files.length>1) toast(`${ok} of ${files.length} photos added to ${w.id}`); }; }
     { const sw=md.querySelector("#startW"); if(sw) sw.onclick=busy(sw,async()=>{ if(!canWorkWO(w)){ toast("Only the assigned technician or an engineer can start this work order"); return; }
       const upd={status:"In progress",lastStartedAt:new Date().toISOString(),lastStartedBy:ME}; if(!w.startedAt){ upd.startedAt=upd.lastStartedAt; upd.startedBy=ME; }
-      if(await save([updDoc("workorders/"+id,upd)],w.id+" started · in progress")){ closeModal(); setTimeout(()=>woDetail(id),300); } }); } md.querySelectorAll("[data-tklink]").forEach(a=>a.onclick=e=>{ e.preventDefault(); ticketDetail(a.dataset.tklink); });
+      const mo=woMachineOps(w,"In progress");
+      if(await save([updDoc("workorders/"+id,upd),...mo.ops],w.id+" started · in progress"+mo.msg)){ closeModal(); setTimeout(()=>woDetail(id),300); } }); } md.querySelectorAll("[data-tklink]").forEach(a=>a.onclick=e=>{ e.preventDefault(); ticketDetail(a.dataset.tklink); });
     if(!canWork&&!canAsg) return;
     const pad=md.querySelector("#sigPad"); let inked=false;
     if(pad){ const wrap=pad.parentElement; const ctx=pad.getContext("2d"); let drawing=false, last=null;
@@ -1623,7 +1647,8 @@ function woDetail(id){
       if(ns==="In progress"&&w.status!=="In progress"){ upd.lastStartedAt=new Date().toISOString(); upd.lastStartedBy=ME; if(!w.startedAt){ upd.startedAt=upd.lastStartedAt; upd.startedBy=ME; } }
       if(ck.length){ upd.checklist=ck; if(ns==="Completed"&&ck.some(x=>!x.done)){ const na=["_safety","_loto","_return"].filter(k=>ck.some(x=>x.mod===k&&!x.done)); const left=ck.filter(x=>!x.done&&!isAck(x.mod)).length; toast(left?`Finish all tasks before completing (${left} left)`:na.length?`${na.map(k=>k==="_safety"?"Safety precautions":k==="_loto"?"LOTO":"LOTO removal / return to service").join(", ")} not confirmed yet`:`Finish all tasks before completing (${ck.filter(x=>!x.done).length} left)`); return; } }
       { const so=await readSignoff(ns==="Completed"); if(so===false) return; if(so) upd.signoff=so; }
-      if(ns!=="Completed"){ if(await save([updDoc("workorders/"+id,upd)],w.id+" saved"+(upd.signoff?" · signed by "+upd.signoff.name:""))) closeModal(); return; }
+      if(ns!=="Completed"){ const mo=ns==="In progress"&&w.status!=="In progress"?woMachineOps(w,"In progress"):{ops:[],msg:""};
+        if(await save([updDoc("workorders/"+id,upd),...mo.ops],w.id+" saved"+(upd.signoff?" · signed by "+upd.signoff.name:"")+mo.msg)) closeModal(); return; }
       const short=draft.filter(x=>P(x.partId)&&qtyAt(P(x.partId),ms)<x.qty); if(short.length){ toast(`Not enough at ${ms}: `+short.map(x=>{ const p=P(x.partId); return `${p.name} (${qtyAt(p,ms)} here, ${totalQty(p)-qtyAt(p,ms)} at other sites)`; }).join(", ")); return; }
       Object.assign(upd,{completed:iso(today),completedAt:new Date().toISOString(),completedBy:ME,downtimeMin:Math.max(0,parseInt(val(md,"downtime"))||0)});
       const ops=[updDoc("workorders/"+id,upd)];
@@ -1633,7 +1658,8 @@ function woDetail(id){
         if(x.retFaulty) ops.push(setDoc("partlog/"+logId(),plEntry({kind:"faulty",partId:p.id,partName:p.name,site:ms,qty:x.qty,source:"machine",machineId:w.machineId,woId:w.id,reason:"Removed during "+w.id+": "+w.title,unitCost:p.unitCost||0}))); });
       const pl=w.pmPlanId&&D.pmPlans.find(p=>p.id===w.pmPlanId); if(pl){ const nd0=nextDue(pl); ops.push(updDoc("pmplans/"+pl.id,{lastDone:iso(today),lastDue:w.dueFor||(isRule(pl)&&nd0>iso(today)?(pl.lastDue||null):nd0)})); }
       const lowAfter=draft.map(x=>P(x.partId)).filter(p=>p&&qtyAt(p,ms)-(draft.find(d=>d.partId===p.id).qty)<=((stockOf(p)[ms]||{}).min||0));
-      if(await save(ops,w.id+" completed"+(lowAfter.length?" · "+lowAfter.length+" part(s) now at/below min":"")+(pl?" · PM schedule updated":"")+(draft.some(x=>x.retFaulty)?" · old parts held as faulty":""))) closeModal();
+      const mo=woMachineOps(w,"Completed"); ops.push(...mo.ops);
+      if(await save(ops,w.id+" completed"+mo.msg+(lowAfter.length?" · "+lowAfter.length+" part(s) now at/below min":"")+(pl?" · PM schedule updated":"")+(draft.some(x=>x.retFaulty)?" · old parts held as faulty":""))) closeModal();
     });
   });
 }
