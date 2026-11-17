@@ -1,0 +1,4 @@
+.substrait/
+.local-blobs/
+__pycache__/
+.venv/

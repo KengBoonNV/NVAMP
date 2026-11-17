@@ -1,0 +1,10 @@
+description: >
+  NVAMP (Ninja Van Automation Maintenance Platform) tracks sortation and dim-weigh
+  machines, work orders, preventive maintenance, spare parts, purchase requests and
+  support tickets for the Singapore automation maintenance team. For maintenance
+  engineers, technicians, supervisors and operations staff.
+
+database: oceanbase
+
+services:
+  object-storage: {}
