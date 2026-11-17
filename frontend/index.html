@@ -2732,14 +2732,14 @@ function addPersonForm(){ if(!guard("settings")) return;
         const P=D.settings.people=D.settings.people||{}; P[picked.id]=entry; closeModal(); render(); } });
   });
 }
-function peopleTable(edit){ const P=D.settings.people||{}; const ids=[...new Set([...D.members.map(m=>m.id),...Object.keys(P),...(ME?[ME]:[])])];
+function peopleTable(edit){ const P=D.settings.people||{}; const rmCol=!!edit&&IS_OWNER; const ids=[...new Set([...D.members.map(m=>m.id),...Object.keys(P),...(ME?[ME]:[])])];
   const cs=D.settings.countries; const ctryAll=[...new Set([defCountry(),...(Array.isArray(cs)?cs.map(c=>typeof c==="string"?c:c.code).filter(Boolean):cs&&typeof cs==="object"?Object.keys(cs):["SG","MY","ID","PH"])])];
   const rows=ids.map(u=>{ const p=P[u]||{}; const mem=D.members.find(m=>m.id===u)||{}; const owner=u===ME&&IS_OWNER; const R=owner?["admin"]:(p.roles||[]); const C=(p.countries&&p.countries.length)?p.countries:[defCountry()];
     const nm=nameOf(u,p.name||mem.name||"Unnamed person"); const dis=edit&&!owner?"":"disabled";
     return `<tr data-uid="${esc(u)}"><td><b>${esc(nm)}</b><div class="small muted">${owner?"Owner (always Admin)":mem.lastSeen?"Last seen "+fmtD(mem.lastSeen):"Added, not signed in yet"}${!owner&&!R.length?` · <span class="gap">no role</span>`:""}</div></td>
       ${ROLE_DEFS.map(([k,l])=>`<td style="text-align:center"><input type="checkbox" data-role="${k}" ${R.includes(k)?"checked":""} ${dis} title="${esc(l)}" style="width:auto"></td>`).join("")}
-      <td class="small">${ctryAll.map(c=>`<label style="display:inline-flex;gap:3px;align-items:center;margin-right:6px"><input type="checkbox" data-ctry="${c}" ${C.includes(c)?"checked":""} ${dis} style="width:auto">${c}</label>`).join("")}</td></tr>`; }).join("");
-  return `<div class="tablewrap"><table><tr><th>Person</th>${ROLE_DEFS.map(([k,l])=>`<th style="text-align:center" title="${esc(l)}">${esc(l.split(" / ")[0])}</th>`).join("")}<th>Countries</th></tr>${rows||`<tr><td colspan="8" class="muted">Nobody has opened NVAMP yet.</td></tr>`}</table></div>`; }
+      <td class="small">${ctryAll.map(c=>`<label style="display:inline-flex;gap:3px;align-items:center;margin-right:6px"><input type="checkbox" data-ctry="${c}" ${C.includes(c)?"checked":""} ${dis} style="width:auto">${c}</label>`).join("")}</td>${rmCol?`<td>${owner?"":`<button type="button" class="btn sm" data-rmperson="${esc(u)}" title="Remove ${esc(nm)} from NVAMP">Remove</button>`}</td>`:""}</tr>`; }).join("");
+  return `<div class="tablewrap"><table><tr><th>Person</th>${ROLE_DEFS.map(([k,l])=>`<th style="text-align:center" title="${esc(l)}">${esc(l.split(" / ")[0])}</th>`).join("")}<th>Countries</th>${rmCol?"<th></th>":""}</tr>${rows||`<tr><td colspan="9" class="muted">Nobody has opened NVAMP yet.</td></tr>`}</table></div>`; }
 function roleMatrix(){ const rows=[["Settings, people & roles","settings"],["Machine structure, new assets, templates","structure"],["Edit asset details, components, documents","assetEdit"],["PM plans: create, edit, copy","pmEdit"],["Create work orders (Technician: breakdowns only)","woCreate"],["Assign / reassign work orders","woAssign"],["Work on any work order","woWorkAny"],["Set machine / module status","status"],["Raise purchase requests","prRaise"],["Approve purchase requests, mark ordered","prApprove"],["Add & edit vendors","vendors"],["Stock adjust, receive, stock count","stock"],["Mark parts faulty","faulty"],["Repair or write off faulty parts","writeoff"],["Raise tickets for machine problems","ticket"],["Review tickets, open work orders from them, go on duty","ticketTriage"]];
   const R=ROLE_DEFS.filter(r=>r[0]!=="viewer");
   return `<div class="tablewrap"><table><tr><th>Function</th>${R.map(r=>`<th style="text-align:center">${esc(r[1].split(" / ")[0])}</th>`).join("")}</tr>${rows.map(([l,p])=>`<tr><td class="small">${esc(l)}</td>${R.map(r=>`<td style="text-align:center">${r[0]==="admin"||(PERM[p]||[]).includes(r[0])?"✓":""}</td>`).join("")}</tr>`).join("")}
@@ -2750,7 +2750,7 @@ function vSettings(el){
   el.innerHTML=`<div class="head"><div><h2>Team &amp; settings</h2><p>Shared lists used across the platform, and who can do what.</p></div></div>
   <div class="grid two">
     <div class="card" style="grid-column:1/-1"><h3>People &amp; roles</h3>
-      <p class="small muted" style="margin-top:-4px">Roles stack: a person gets every permission of each role ticked. Country limits Planner, Approver, Technician, Store keeper and Operations team lead to those countries. Give Operations team lead to team leaders and above only; on its own it shows just Tickets and Machine status. Admin covers all countries. Use <b>+ Add person</b> to set someone up before they first sign in. Anyone who opens NVAMP also appears here. To remove someone's access, untick all their roles.</p>
+      <p class="small muted" style="margin-top:-4px">Roles stack: a person gets every permission of each role ticked. Country limits Planner, Approver, Technician, Store keeper and Operations team lead to those countries. Give Operations team lead to team leaders and above only; on its own it shows just Tickets and Machine status. Admin covers all countries. Use <b>+ Add person</b> to set someone up before they first sign in. Anyone who opens NVAMP also appears here. To remove someone's access, untick all their roles${IS_OWNER?`, or use <b>Remove</b> to take them off this list`:""}.</p>
       ${peopleTable(canAdmin)}
       ${canAdmin?`<div class="actions"><button class="btn" id="addPerson">+ Add person</button><button class="btn primary" id="svPeople">Save roles</button></div>`:`<p class="small muted">Only Admins can change roles.</p>`}
       <details style="margin-top:8px"><summary class="small">What each role can do</summary>${roleMatrix()}</details>
@@ -2801,6 +2801,19 @@ function vSettings(el){
   if(svL) svL.onclick=busy(svL,async()=>{ if(!guard("settings")) return; const opsL=[...new Set(lines("ops"))]; if(!opsL.length){ toast("Keep at least one operation"); return; }
     const data={operations:opsL}; if(el.querySelector('[name="techs"]')) data.techs=[...new Set(lines("techs"))]; await writeSettings(data,"Lists saved"); });
   const ap=el.querySelector("#addPerson"); if(ap) ap.onclick=addPersonForm;
+  /* Owner only: remove a person — their roles and their member record. Work orders, logs and
+     other history keep their id. Someone who can still sign in reappears with no role. */
+  el.querySelectorAll("[data-rmperson]").forEach(b=>b.onclick=busy(b,async()=>{
+    if(!IS_OWNER){ toast("Only the NVAMP owner can remove people"); return; }
+    const uid=b.dataset.rmperson; if(!uid||uid===ME) return; const hadRoles=!!(s.people||{})[uid];
+    const pn=personName(uid), rl=((s.people||{})[uid]||{}).roles||[];
+    const nm=pn&&pn!=="Unnamed"?pn:`Unnamed person (id ${uid.length>10?uid.slice(0,8)+"…":uid}${rl.length?", "+rl.join("/"):""})`;
+    if(!confirm(`Remove ${nm} from NVAMP?\n\nTheir roles and member record are deleted. Work orders, logs and other history keep their name. If they can still sign in, they will reappear with no role the next time they open NVAMP.`)) return;
+    const ops=[];
+    if(hadRoles) ops.push(withMeta(()=>db.doc("settings/app").get().then(sn=>{ if(!sn.exists) return; const d=JSON.parse(JSON.stringify(sn.data())); if(!d.people||!d.people[uid]) return; delete d.people[uid]; return db.doc("settings/app").set(d); }),{op:"update",path:"settings/app",fields:{["people."+nm]:{from:((s.people||{})[uid].roles||[]).join(", ")||"no role",to:null}}}));
+    if(D.members.some(m=>m.id===uid)) ops.push(delDoc("members/"+uid));
+    if(!ops.length){ toast("Nothing to remove"); return; }
+    if(await save(ops,`${nm} removed`)){ if(D.settings.people) delete D.settings.people[uid]; D.members=D.members.filter(m=>m.id!==uid); render(); } }));
   const sp=el.querySelector("#svPeople");
   if(sp) sp.onclick=busy(sp,async()=>{ if(!guard("settings")) return; const people={};
     el.querySelectorAll("tr[data-uid]").forEach(tr=>{ const uid=tr.dataset.uid; const roles=[...tr.querySelectorAll("[data-role]:checked")].map(c=>c.dataset.role); const countries=[...tr.querySelectorAll("[data-ctry]:checked")].map(c=>c.dataset.ctry);
