@@ -360,8 +360,8 @@ const isAuto = m => !!m.rollup && m.statusMode!=="manual";
 /* Machine status follows its work orders. A work order going In progress (on the machine or one of its
    modules) puts the machine under Maintenance. When it completes and no other work order on that machine
    is in progress, the module it was on goes back to Running and the machine returns to Running (for a
-   machine on automatic status: to whatever its other modules say). A work order on hold keeps the machine
-   under Maintenance. Returns {ops, msg} to add to the work order's own save. */
+   machine on automatic status: to whatever its other modules say). Putting the work order on hold returns
+   the machine to the status it had before the work started; resuming puts it back under Maintenance. Returns {ops, msg} to add to the work order's own save. */
 function woMachineOps(w,next){ const m=M(w.machineId); const none={ops:[],msg:""}; if(!m||!isLive(m)) return none;
   const t=new Date().toISOString(), where=w.component?" on "+compShort(m,w.component):"";
   const ev=(status,note,extra)=>()=>db.collection("events").add(Object.assign({t,machineId:m.id,status,note,byId:ME,byName:"",woId:w.id},extra||{}));
@@ -377,6 +377,12 @@ function woMachineOps(w,next){ const m=M(w.machineId); const none={ops:[],msg:""
     if(m.status==="Maintenance"||isAuto(m)){ if(back!==m.status){ Object.assign(upd,{status:back,statusSince:t,updatedBy:ME,maintWO:null}); ops.push(ev(back,why)); } upd.note=why; }
     if(!Object.keys(upd).length) return none;
     return {ops:[updDoc("machines/"+m.id,upd),...ops],msg:upd.status?` · ${m.name} back to ${stLabel(upd.status)}`:""}; }
+  if(next==="On hold"){ /* paused: the machine goes back to the status it had before the work started (e.g. Down or Running with issues) */
+    if(m.status!=="Maintenance"||D.wos.some(x=>x.machineId===m.id&&x.id!==w.id&&x.status==="In progress")) return none;
+    let back=m.preMaintStatus, why=`Work order ${w.id} on hold${where}`;
+    if(isAuto(m)){ const wosSave=D.wos; D.wos=D.wos.filter(x=>x.id!==w.id); const d=deriveStatus(m); D.wos=wosSave; if(d){ back=d.status; if(d.reason) why+=" · Auto: "+d.reason; } }
+    if(!back||back==="Maintenance"){ const prev=D.events.find(e=>e.machineId===m.id&&!e.component&&e.status&&e.status!=="Maintenance"&&e.t<(m.statusSince||"9")); back=prev?prev.status:"Running"; }
+    return {ops:[updDoc("machines/"+m.id,{status:back,note:why,statusSince:t,updatedBy:ME,maintWO:null}),ev(back,why)],msg:` · ${m.name} back to ${stLabel(back)}`}; }
   return none; }
 const modDot = st => st==="Running"?"":` ${pill(st==="Down"?"s-crit":"s-warn",st)}`;
 async function setModuleStatus(m,code,st,note){
@@ -1647,7 +1653,7 @@ function woDetail(id){
       if(ns==="In progress"&&w.status!=="In progress"){ upd.lastStartedAt=new Date().toISOString(); upd.lastStartedBy=ME; if(!w.startedAt){ upd.startedAt=upd.lastStartedAt; upd.startedBy=ME; } }
       if(ck.length){ upd.checklist=ck; if(ns==="Completed"&&ck.some(x=>!x.done)){ const na=["_safety","_loto","_return"].filter(k=>ck.some(x=>x.mod===k&&!x.done)); const left=ck.filter(x=>!x.done&&!isAck(x.mod)).length; toast(left?`Finish all tasks before completing (${left} left)`:na.length?`${na.map(k=>k==="_safety"?"Safety precautions":k==="_loto"?"LOTO":"LOTO removal / return to service").join(", ")} not confirmed yet`:`Finish all tasks before completing (${ck.filter(x=>!x.done).length} left)`); return; } }
       { const so=await readSignoff(ns==="Completed"); if(so===false) return; if(so) upd.signoff=so; }
-      if(ns!=="Completed"){ const mo=ns==="In progress"&&w.status!=="In progress"?woMachineOps(w,"In progress"):{ops:[],msg:""};
+      if(ns!=="Completed"){ const mo=ns==="In progress"&&w.status!=="In progress"?woMachineOps(w,"In progress"):ns==="On hold"&&w.status==="In progress"?woMachineOps(w,"On hold"):{ops:[],msg:""};
         if(await save([updDoc("workorders/"+id,upd),...mo.ops],w.id+" saved"+(upd.signoff?" · signed by "+upd.signoff.name:"")+mo.msg)) closeModal(); return; }
       const short=draft.filter(x=>P(x.partId)&&qtyAt(P(x.partId),ms)<x.qty); if(short.length){ toast(`Not enough at ${ms}: `+short.map(x=>{ const p=P(x.partId); return `${p.name} (${qtyAt(p,ms)} here, ${totalQty(p)-qtyAt(p,ms)} at other sites)`; }).join(", ")); return; }
       Object.assign(upd,{completed:iso(today),completedAt:new Date().toISOString(),completedBy:ME,downtimeMin:Math.max(0,parseInt(val(md,"downtime"))||0)});
