@@ -154,7 +154,19 @@
       async get() { return querySnap(await fetchDocs()); },
       onSnapshot(next, onError) {
         let prev = null;
-        return listen(path, fetchDocs, docs => { const s = querySnap(docs, prev); prev = new Set(docs.map(d => d.id)); next(s); }, onError);
+        const deliver = docs => { const s = querySnap(docs, prev); prev = new Set(docs.map(d => d.id)); next(s); };
+        if (q.orderBy || q.limit || q.wheres.length) return listen(path, fetchDocs, deliver, onError);
+        // Plain collection: keep a local copy and fetch only documents changed since the last
+        // read (5 s overlap for clock skew), plus the current id list to drop deletions.
+        const cache = new Map(); let lastT = null;
+        const fetchInc = async () => {
+          const r = await api("GET", "/api/db/coll?path=" + enc(path) + (lastT !== null ? "&since=" + Math.max(0, lastT - 5000) : ""));
+          if (lastT === null || !r.ids) { cache.clear(); r.docs.forEach(d => cache.set(d.id, d.data)); }
+          else { r.docs.forEach(d => cache.set(d.id, d.data)); const keep = new Set(r.ids); for (const k of [...cache.keys()]) if (!keep.has(k)) cache.delete(k); }
+          if (typeof r.t === "number") lastT = lastT === null ? r.t : Math.max(lastT, r.t);
+          return [...cache.keys()].sort().map(id => ({ id, data: cache.get(id) }));
+        };
+        return listen(path, fetchInc, deliver, onError);
       },
     };
   }
@@ -168,7 +180,15 @@
     });
   }
 
-  const db = Object.freeze({ doc: docRef, collection: collRef });
+  /* Substrait-only extension (not in the claude.ai db): write many whole documents in one
+     call. items: [{path, data}], at most 500. Used by the MaintainX CSV imports. */
+  async function batchSet(items) {
+    items.forEach(it => checkPath(it.path, true));
+    await api("POST", "/api/db/batch-set", { sets: items.map(it => ({ path: it.path, data: it.data })) });
+    kick();
+  }
+
+  const db = Object.freeze({ doc: docRef, collection: collRef, batchSet });
 
   /* ---------- user ---------- */
   let mePromise = null;

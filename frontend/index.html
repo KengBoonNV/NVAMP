@@ -1221,7 +1221,7 @@ function vRegister(el){
   const fieldGaps={}; live.forEach(m=>assetGaps(m).forEach(g=>fieldGaps[g]=(fieldGaps[g]||0)+1));
   const sel=vRegister.sel||(vRegister.sel=new Set());
   el.innerHTML=`<div class="head"><div><h2>Machine status</h2><p>The asset register holds each machine's record. Click a row to view or edit it.${SITE!=="All sites"?` Showing <b>${esc(SITE)}</b> only.`:""}</p></div>
-  <div class="row"><button class="btn w" id="exp">Export CSV</button><button class="btn w" id="addM" data-perm="structure">+ Add machine</button></div></div>
+  <div class="row"><button class="btn w" data-mximport="assets" data-perm="settings">Import CSV</button><button class="btn w" id="exp">Export CSV</button><button class="btn w" id="addM" data-perm="structure">+ Add machine</button></div></div>
   ${machTabs()}
   <div class="grid tiles"><div class="card tile"><div class="lbl">Assets in register</div><div class="val">${live.length}</div><div class="note">${all.length-live.length} decommissioned${f.decom?" (shown)":" (hidden)"}</div></div>
   <div class="card tile click" id="tG"><div class="lbl">Records complete</div><div class="val">${live.filter(m=>!assetGaps(m).length).length}/${live.length}</div><div class="note">${total?Math.round(done/total*100):0}% of fields filled</div></div>
@@ -1331,20 +1331,22 @@ function addMachine(){ if(!guard("structure")) return;
 /* ---------- WORK ORDERS ---------- */
 function vWOs(el){
   const f=vWOs.f||(vWOs.f={status:"Open items",type:"All",tech:"All",q:""});
-  const ids=siteMachines().map(m=>m.id);
-  let list=D.wos.filter(w=>ids.includes(w.machineId));
+  const ids=new Set(siteMachines().map(m=>m.id));
+  /* imported MaintainX work orders may name a machine group (e.g. SG-DWS) or no asset at all */
+  const looseIn=w=>{ const mem=D.machines.filter(m=>m.parent===w.machineId); return mem.length?mem.some(m=>ids.has(m.id)):(SITE==="All sites"&&OP==="All operations"&&inCountry(w.country)); };
+  let list=D.wos.filter(w=>ids.has(w.machineId)||(w.machineLabel&&!M(w.machineId)&&looseIn(w)));
   if(f.status==="Open items") list=list.filter(openWO); else if(f.status!=="All") list=list.filter(w=>w.status===f.status);
   if(f.type!=="All") list=list.filter(w=>w.type===f.type);
   if(f.tech!=="All") list=list.filter(w=>w.assignee===f.tech);
-  if(f.q) list=list.filter(w=>(w.id+w.title+w.machineId+" "+(w.component||"")+" "+((M(w.machineId)||{}).name||"")).toLowerCase().includes(f.q.toLowerCase()));
+  if(f.q) list=list.filter(w=>(w.id+w.title+w.machineId+" "+(w.machineLabel||"")+" "+(w.component||"")+" "+((M(w.machineId)||{}).name||"")).toLowerCase().includes(f.q.toLowerCase()));
   const pr={Critical:0,High:1,Medium:2,Low:3};
   list.sort((a,b)=>(openWO(b)-openWO(a))||((pr[a.priority]??9)-(pr[b.priority]??9))||String(a.due).localeCompare(String(b.due)));
-  el.innerHTML=`<div class="head"><div><h2>Work orders</h2><p>Preventive (PM) and corrective (CM) maintenance jobs for technicians.</p></div><button class="btn primary w" id="nw" data-perm="woCreate">+ New work order</button></div>
+  el.innerHTML=`<div class="head"><div><h2>Work orders</h2><p>Preventive (PM) and corrective (CM) maintenance jobs for technicians.</p></div><div class="row"><button class="btn w" data-mximport="wos" data-perm="settings">Import CSV</button><button class="btn primary w" id="nw" data-perm="woCreate">+ New work order</button></div></div>
   <div class="filters"><select data-f="status">${opts(["Open items","All","Open","In progress","On hold","Completed"],f.status)}</select>
   <select data-f="type">${opts(["All","PM","CM"],f.type)}</select><select data-f="tech">${opts(["All",...(D.settings.techs||[])],f.tech)}</select>
   <input data-f="q" placeholder="Search…" value="${esc(f.q)}"></div>
   <div class="card"><div class="tablewrap"><table><tr><th>ID</th><th>Type</th><th>Machine</th><th>Title</th><th>Priority</th><th>Assignee</th><th>Due</th><th>Status</th></tr>
-  ${list.map(w=>{ const late=openWO(w)&&w.due<iso(today); return `<tr class="click" data-id="${esc(w.id)}"><td>${esc(w.id)}</td><td>${esc(w.type)}</td><td>${esc(w.machineId)}${w.component?`<br><span class="small muted">› ${esc(compShort(M(w.machineId),w.component))}</span>`:""}</td><td>${esc(w.title)}${(w.tickets||[]).length?` <span class="small s-info" title="Opened from ticket ${esc(w.tickets.join(", "))}">🎫 ${esc(w.tickets[0])}${w.tickets.length>1?" +"+(w.tickets.length-1):""}</span>`:""}${ckProgress(w)?` <span class="small ${ckProgress(w).done===ckProgress(w).total?"s-good":"muted"}">☑ ${ckProgress(w).done}/${ckProgress(w).total}</span>`:""}</td><td>${pill(prioCls[w.priority],w.priority)}</td><td>${esc(w.assignee)}</td><td>${late?`<span class="s-crit" title="Past due">⚠ ${fmtD(w.due)}</span>`:fmtD(w.due)}</td><td>${pill(woCls[w.status],w.status)}</td></tr>`;}).join("")}</table>
+  ${list.map(w=>{ const late=openWO(w)&&w.due<iso(today); return `<tr class="click" data-id="${esc(w.id)}"><td>${esc(w.id)}</td><td>${esc(w.type)}</td><td>${esc(w.machineId||w.machineLabel||"")}${w.component?`<br><span class="small muted">› ${esc(compShort(M(w.machineId),w.component))}</span>`:""}</td><td>${esc(w.title)}${(w.tickets||[]).length?` <span class="small s-info" title="Opened from ticket ${esc(w.tickets.join(", "))}">🎫 ${esc(w.tickets[0])}${w.tickets.length>1?" +"+(w.tickets.length-1):""}</span>`:""}${ckProgress(w)?` <span class="small ${ckProgress(w).done===ckProgress(w).total?"s-good":"muted"}">☑ ${ckProgress(w).done}/${ckProgress(w).total}</span>`:""}</td><td>${pill(prioCls[w.priority],w.priority)}</td><td>${esc(w.assignee)}</td><td>${late?`<span class="s-crit" title="Past due">⚠ ${fmtD(w.due)}</span>`:fmtD(w.due)}</td><td>${pill(woCls[w.status],w.status)}</td></tr>`;}).join("")}</table>
   ${list.length?"":`<div class="empty">${CONN==="connecting"?"Loading…":"No work orders match"}</div>`}</div></div>`;
   el.querySelectorAll("[data-f]").forEach(i=>{ const ev=i.tagName==="INPUT"?"input":"change"; i.addEventListener(ev,()=>{ f[i.dataset.f]=i.value; render(); }); });
   el.querySelector("#nw").onclick=()=>woForm();
@@ -1485,7 +1487,7 @@ function woForm(pre={}){
   });
 }
 function woDetail(id){
-  const w=D.wos.find(x=>x.id===id); if(!w) return; const m=M(w.machineId)||{id:w.machineId,name:"(removed machine)",site:"",type:""}; const done=w.status==="Completed";
+  const w=D.wos.find(x=>x.id===id); if(!w) return; const m=M(w.machineId)||{id:w.machineId,name:w.machineLabel||"(removed machine)",site:"",type:""}; const done=w.status==="Completed";
   const compatible=D.parts.filter(p=>!p.obsolete&&(p.machines||[]).includes(m.id)).sort((a,b)=>(((b.components||[]).includes(w.component))-((a.components||[]).includes(w.component)))||a.name.localeCompare(b.name)); const ms=m.site;
   const draft=(w.partsUsed||[]).map(x=>({...x}));
   const partsHtml=()=> draft.length?`<ul class="list">${draft.map((x,i)=>`<li><span>${esc(P(x.partId)?.name||x.partId)} × ${x.qty}${x.retFaulty?` <span class="small s-warn">· old part kept as faulty</span>`:""}</span>${!canWork?"":`<button class="btn sm danger w" data-rm="${i}">Remove</button>`}</li>`).join("")}</ul>`:`<p class="muted small">No parts recorded</p>`;
@@ -1493,7 +1495,7 @@ function woDetail(id){
   const dis = canWork ? "":"disabled"; const disA = canAsg ? "":"disabled";
   modal(`<h3>${esc(w.id)} · ${esc(w.title)}</h3>
   <div class="kvgrid"><div>Type</div><div>${w.type==="PM"?"Preventive":"Corrective"}</div><div>Machine</div><div>${esc(m.id)} · ${esc(m.name)} ${m.site?"("+esc(m.site)+")":""}</div>${w.component?`<div>Sub-system</div><div>${esc(compLabel(m,w.component))}</div>`:""}${w.type==="PM"&&scopeModules(m,w.component||"").length?`<div>Modules in scope</div><div>${(w.modules||scopeModules(m,w.component||"").map(c=>c.code)).map(esc).join(", ")} <span class="small muted">(${esc(modulesLabel(m,w))})</span></div>`:""}
-  <div>Created</div><div>${fmtD(w.created)}${w.createdBy?" by "+esc(nameOf(w.createdBy)):""}${w.auto?` <span class="small muted">· automatically from ${esc(w.pmPlanId)}</span>`:""}${w.dueFor?` <span class="small muted">· PM due ${fmtD(w.dueFor)}</span>`:""}</div>${(w.tickets||[]).length?`<div>Requested by ticket</div><div>${w.tickets.map(x=>{ const tk=D.tickets.find(y=>y.id===x); return `<a href="#" data-tklink="${esc(x)}">${esc(x)}</a>${tk?` <span class="small muted">· ${esc(tk.raisedName||nameOf(tk.raisedBy))}: ${esc(tkTitle(tk))}${(tk.photos||[]).length?" · 📷"+tk.photos.length:""}</span>`:""}`; }).join("<br>")}</div>`:""}${done?`<div>Completed</div><div>${fmtD(w.completed)}${w.completedBy?" by "+esc(nameOf(w.completedBy)):""} · downtime ${w.downtimeMin||0} min</div>`:""}</div>
+  <div>Created</div><div>${fmtD(w.created)}${w.createdBy?" by "+esc(nameOf(w.createdBy)):w.createdByName?" by "+esc(w.createdByName):""}${w.sourceUrl?` <span class="small muted">· imported from <a href="${esc(w.sourceUrl)}" target="_blank" rel="noopener">MaintainX</a>${w.category?" · "+esc(w.category):""}</span>`:""}${w.auto?` <span class="small muted">· automatically from ${esc(w.pmPlanId)}</span>`:""}${w.dueFor?` <span class="small muted">· PM due ${fmtD(w.dueFor)}</span>`:""}</div>${(w.tickets||[]).length?`<div>Requested by ticket</div><div>${w.tickets.map(x=>{ const tk=D.tickets.find(y=>y.id===x); return `<a href="#" data-tklink="${esc(x)}">${esc(x)}</a>${tk?` <span class="small muted">· ${esc(tk.raisedName||nameOf(tk.raisedBy))}: ${esc(tkTitle(tk))}${(tk.photos||[]).length?" · 📷"+tk.photos.length:""}</span>`:""}`; }).join("<br>")}</div>`:""}${done?`<div>Completed</div><div>${fmtD(w.completed)}${w.completedBy?" by "+esc(nameOf(w.completedBy)):""} · downtime ${w.downtimeMin||0} min</div>`:""}</div>
   <div class="form"><label>Status<select name="status" ${dis}>${opts(["Open","In progress","On hold","Completed"],w.status)}</select></label>
   <label>Assignee<select name="assignee" ${disA}>${techOpts(w.assignee,w.assigneeId)}</select>${!done&&!canWork&&!canAsg&&hasRole("technician")?`<span class="small muted">Assigned to someone else. You can view it; ask an engineer to reassign it to you.</span>`:""}</label>
   <label>Priority<select name="priority" ${disA}>${opts(["Critical","High","Medium","Low"],w.priority)}</select></label>
@@ -1846,7 +1848,7 @@ function vParts(el){
   const counts=D.parts.filter(p=>p.needsCount&&!p.obsolete).length;
   const noStock = SITE==="All sites" ? D.parts.filter(p=>!p.obsolete&&!Object.keys(stockOf(p)).length) : [];
   el.innerHTML=`<div class="head"><div><h2>Spare parts</h2><p>Stock is tracked per site. Completing a work order takes parts from the machine's site; receiving a purchase request adds them to the delivery site. Click a part for details.${SITE!=="All sites"?` Showing <b>${esc(SITE)}</b> only.`:""}</p></div>
-  <div class="row"><button class="btn w" id="prLow" data-perm="prRaise">Raise PR for low stock</button><button class="btn primary w" id="np" data-perm="stock">+ Add part / stock location</button></div></div>
+  <div class="row"><button class="btn w" data-mximport="parts" data-perm="settings">Import CSV</button><button class="btn w" id="prLow" data-perm="prRaise">Raise PR for low stock</button><button class="btn primary w" id="np" data-perm="stock">+ Add part / stock location</button></div></div>
   ${partsTabs(f)}${SITE!=="All sites"&&isOfficeSite(SITE)?`<div class="banner">${esc(SITE)} is an office and parts store. Use “+ Add part / stock location” to record parts kept here.</div>`:""}
   <div class="grid tiles"><div class="card tile"><div class="lbl">Active stock lines${SITE!=="All sites"?" at "+esc(SITE):""}</div><div class="val">${act.length}</div><div class="note">${D.parts.filter(p=>p.obsolete).length} obsolete parts hidden by default</div></div>
   <div class="card tile click" id="tLow"><div class="lbl">At or below minimum</div><div class="val">${lowStock().length}</div><div class="note">active parts only</div></div>
@@ -2699,6 +2701,158 @@ DWS-01,${iso(addDays(today,-1))},1200,35,1,10450,98.6,2</pre>
     });
   });
 }
+
+/* ---------- IMPORT PAST DATA FROM MAINTAINX CSV (assets, spare parts, work orders) ----------
+   The same rules used to load Singapore: an asset with no parent, or whose parent is a group
+   (a parent of device-named assets, e.g. SG-DWS), is a machine; other child assets become its
+   components; "Ignore" status means decommissioned. Parts link to machines through their
+   Assets column. Work orders keep their MaintainX history. Import assets, then parts, then
+   work orders. Records already in NVAMP are skipped, never overwritten. */
+const MX_TYPE_CODES={DWS:"Static DWS",SDWS:"Static DWS",BDWS:"Bulky DWS",BPS:"Bulky parcel sorter",SPS:"Small parcel sorter"};
+const MX_KIND={
+  assets:{title:"assets",what:"MaintainX → Assets → Export (CSV)",need:["ID","Name","Parent","Location"],coll:"machines"},
+  parts:{title:"spare parts",what:"MaintainX → Parts → Export (CSV)",need:["ID","Name","Location","Quantity in Stock"],coll:"parts"},
+  wos:{title:"work orders",what:"MaintainX → Work Orders → Export (CSV)",need:["ID","Title","Status","Work Type","Created on"],coll:"workorders"}};
+function mxRows(text){ const r=readCsvRows(String(text||"").replace(/^﻿/,"")); if(r.length<2) return {head:[],rows:[]}; const head=r[0].map(x=>String(x).trim());
+  return {head,rows:r.slice(1).map(x=>{ const o={}; head.forEach((k,i)=>o[k]=String(x[i]==null?"":x[i]).trim()); return o; })}; }
+const mxId = s => String(s||"").trim().replace(/[^A-Za-z0-9_\-.~:@+]+/g,"-").replace(/^[-.]+|[-.]+$/g,"").slice(0,180);
+const mxDate = s => { const m=String(s||"").match(/^(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
+const mxNum = s => { const n=parseFloat(String(s||"").replace(/[^0-9.\-]/g,"")); return isFinite(n)?n:0; };
+const mxList = s => String(s||"").split("|").map(x=>x.trim()).filter(Boolean);
+const mxDevice = n => /^[A-Za-z0-9]+(-[A-Za-z0-9]+){3,}$/.test(String(n||"").trim());
+const mxUrl = s => /^https?:\/\//i.test(String(s||"").trim())?String(s).trim():undefined;
+const mxClean = o => { Object.keys(o).forEach(k=>{ if(o[k]===undefined||o[k]==="") delete o[k]; }); return o; };
+function mxTypeOf(r){ const codes=mxList(r.Types).map(x=>x.toUpperCase()); const segs=String(r.Name||"").toUpperCase().split(/[-\s]+/);
+  for(const c of [...codes,...segs]) if(MX_TYPE_CODES[c]) return MX_TYPE_CODES[c];
+  if(segs.includes("BF")) return "Blast freezer"; if(segs.includes("SF")) return "Storage freezer";
+  return machineTypes().find(t=>codes.includes(t.toUpperCase()))||""; }
+/* find a machine (or one of its components, or a machine group) by MaintainX asset name or asset ID */
+function mxResolver(){ const byName=new Map(), byAid=new Map(), groups=new Map();
+  const put=(map,k,v)=>{ k=String(k||"").trim().toLowerCase(); if(k&&!map.has(k)) map.set(k,v); };
+  D.machines.forEach(m=>{ put(byName,m.id,{m}); put(byName,m.sourceName,{m}); put(byAid,m.sourceId,{m}); });
+  D.machines.forEach(m=>{ flatComps(m).forEach(c=>{ put(byName,c.name,{m,comp:c.code}); const u=String((c.node&&c.node.sourceUrl)||"").match(/assets\/(\d+)/); if(u) put(byAid,u[1],{m,comp:c.code}); });
+    if(m.parent){ const k=String(m.parent).trim().toLowerCase(); if(!groups.has(k)) groups.set(k,{group:String(m.parent).trim(),members:[]}); groups.get(k).members.push(m); } });
+  return (name,aid)=>{ const a=byAid.get(String(aid||"").trim().toLowerCase()); if(a) return a; const n=String(name||"").trim(); if(!n) return null;
+    return byName.get(n.toLowerCase())||byName.get(mxId(n).toLowerCase())||groups.get(n.toLowerCase())||null; }; }
+function mxBuildAssets(rows,ctry,op0){
+  const out={recs:[],existing:[],skipped:0,warns:[],notes:[],sites:new Set()}; const byName={}, kids={};
+  rows.forEach(r=>{ if(r.Name) byName[r.Name]=r; if(r.Parent) (kids[r.Parent]=kids[r.Parent]||[]).push(r); });
+  const isGroup=n=>(kids[n]||[]).some(c=>mxDevice(c.Name));
+  const isMach=r=>!!r.Name&&!isGroup(r.Name)&&(!r.Parent||isGroup(r.Parent)||!byName[r.Parent]);
+  const groups=new Set(); rows.forEach(r=>{ if(r.Parent&&isGroup(r.Parent)) groups.add(r.Parent); });
+  const node=(r,d)=>{ const o={name:r.Name}; if(r.URL) o.sourceUrl=r.URL; const ce=mxDate(r["Certificate 1 Expire Date"]); if(ce) o.certExpiry=ce; const cu=mxUrl(r["Active Certificate 1"]); if(cu) o.certUrl=cu;
+    if(d<6){ const ch=(kids[r.Name]||[]).filter(c=>!isMach(c)).map(c=>node(c,d+1)); if(ch.length) o.children=ch; } return o; };
+  const stamp=new Date().toISOString(), src="MaintainX export "+iso(today); let nComp=0, noType=0; const count=a=>(a||[]).forEach(c=>{ nComp++; count(c.children); });
+  const machs=rows.filter(isMach);
+  machs.forEach(r=>{ const id=mxId(r.Name); if(!id){ out.skipped++; return; }
+    const type=mxTypeOf(r); if(!type) noType++; const num=String(r.Name).split(/[-\s]+/).reverse().find(x=>/^\d{1,3}[A-Z]?$/i.test(x))||""; const manu=r.Manufacturer||"";
+    const tail=String(r.Name).split(/[-\s]+/).pop()||"", brand=manu||(/^[A-Za-z]{3,}$/.test(tail)&&!(D.settings.sites||[]).includes(tail)&&tail!==r.Location?tail:"");
+    const name=/sorter/i.test(type)&&brand?`${brand.toUpperCase()} ${type.toLowerCase()}`:type&&num?`${type} ${num}`:type&&brand?`${brand.toUpperCase()} ${type.toLowerCase()}`:r.Name;
+    const st=/^(ignore|do not track|decommissioned|inactive|retired)$/i.test(r.Status)?"Decommissioned":/^offline$/i.test(r.Status)?"Down":"Running";
+    const comps=(kids[r.Name]||[]).filter(c=>!isMach(c)).map(c=>node(c,1)); count(comps);
+    const site=r.Location||""; if(site) out.sites.add(site);
+    const m=mxClean({name,type,site,country:ctry,operation:TYPE_OP[type]||op0,status:st,statusSince:stamp,note:st==="Decommissioned"?"Decommissioned — kept for history":undefined,
+      model:r.Model,manufacturer:manu,serial:r["Serial Number"],year:/^\d{4}$/.test(r.Year)?r.Year:undefined,assetTag:r["Asset ID"],vendors:mxList(r.Vendors).join(", "),description:r.Description,
+      location:r["Location Address"],criticality:["Critical","Important","Normal"].find(c=>c.toLowerCase()===String(r.Criticality||"").toLowerCase()),
+      certExpiry:mxDate(r["Certificate 1 Expire Date"])||undefined,certUrl:mxUrl(r["Active Certificate 1"]),parent:r.Parent||undefined,parentNA:r.Parent?undefined:true,
+      sourceName:r.Name!==id?r.Name:undefined,sourceUrl:r.URL,sourceId:r.ID,source:src});
+    const ph=mxUrl(r.Thumbnail); if(ph) m.photos=[{url:ph,source:"MaintainX",caption:"Photo"}];
+    if(comps.length) m.components=comps;
+    const ex=M(id)||D.machines.find(x=>x.sourceId&&x.sourceId===r.ID);
+    (ex?out.existing:out.recs).push({path:"machines/"+id,data:m,cols:[id,name,type||"Not set",site,st,comps.length?String(comps.length):""]}); });
+  out.notes.push(`${rows.length} rows: ${machs.length} machines and ${nComp} components${groups.size?`; groups ${[...groups].join(", ")} are kept as each machine's parent`:""}`);
+  if(noType) out.warns.push(`${noType} machine(s) have no equipment type in MaintainX. Set it in the asset record after import.`);
+  return out; }
+function mxBuildParts(rows,ctry,op0){
+  const out={recs:[],existing:[],skipped:0,warns:[],notes:[],sites:new Set()}; const find=mxResolver(), unres=new Set(), src="MaintainX parts export "+iso(today); let linked=0;
+  rows.forEach(r=>{ const raw=r.Name||""; if(!raw||!r.ID||/^\s*\[(delete|deleted|not in use|obsolete)/i.test(raw)){ out.skipped++; return; }
+    const id="MX-"+mxId(r.ID), name=raw.replace(new RegExp("^"+ctry+"-","i"),"").trim()||raw;
+    let desc=r.Description||""; const ltm=desc.match(/Lead\s*Time\s*:\s*(\d+)/i); desc=desc.replace(/\s*Lead\s*Time\s*:\s*\d+\s*(days?)?/ig,"").trim();
+    const um=desc.match(/Unit\s*of\s*Measure\s*:\s*([^\n]+)/i); desc=desc.replace(/\s*Unit\s*of\s*Measure\s*:\s*[^\n]*/ig,"").trim();
+    const uom=um?({pcs:"pc",pc:"pc",piece:"pc",pieces:"pc",m:"m",meter:"m",metre:"m",set:"set",sets:"set"})[um[1].trim().toLowerCase()]||um[1].trim().toLowerCase():"pc";
+    const hits=mxList(r.Assets).map(a=>{ const h=find(a); if(!h) unres.add(a); return h; }).filter(Boolean);
+    if(!hits.length){ /* no Assets column: link by the make in the name, e.g. SG-SROGO-Regulator → the SROGO machine, when exactly one machine matches */
+      const tok=(raw.replace(new RegExp("^"+ctry+"-","i"),"").split("-")[0]||"").trim().toUpperCase();
+      const cand=tok.length>2?D.machines.filter(m=>String(m.id).toUpperCase().split(/[-\s]+/).includes(tok)||String(m.manufacturer||"").toUpperCase()===tok):[];
+      if(cand.length===1) hits.push({m:cand[0]}); }
+    const ms=[...new Set(hits.flatMap(h=>h.m?[h.m]:h.members))], comps=[...new Set(hits.filter(h=>h.comp).map(h=>h.comp))]; if(ms.length) linked++;
+    const live=ms.filter(m=>m.status!=="Decommissioned"), types=[...new Set(live.map(m=>m.type).filter(Boolean))];
+    const site=r.Location||""; if(site) out.sites.add(site); let qty=mxNum(r["Quantity in Stock"]); const neg=qty<0; if(neg) qty=0;
+    const d=mxClean({name,sourceName:raw,forType:types.length===1?types[0]:"Common",forLabel:[...new Set(ms.map(m=>(m.manufacturer||m.name)+(m.status==="Decommissioned"?" (decommissioned)":"")))].join(" + "),
+      machines:ms.map(m=>m.id),obsolete:ms.length>0&&!live.length,critical:/critical/i.test(r.Types)||undefined,country:ctry,operation:(ms[0]&&(ms[0].operation||TYPE_OP[ms[0].type]))||op0,
+      unitCost:mxNum(r["Unit Cost"]),costKnown:r["Unit Cost"]!==""?true:undefined,uom,leadTimeDays:ltm?+ltm[1]:(mxNum(r["Lead Time (Days)"])||mxNum(r["Lead Time"])||0),description:desc,
+      stock:site?{[site]:{qty,min:mxNum(r["Minimum Quantity"]),bin:""}}:{},mxOrdered:mxNum(r["Ordered Quantity"]),origSite:site,faulty:mxNum(r.Faulty),scrap:mxNum(r.Scrap),
+      vendors:mxList(r.Vendors).join(", "),brand:r["Brand Name"],partNumber:r["Part Numbers"],needsCount:neg||undefined,countNote:neg?`MaintainX showed ${r["Quantity in Stock"]} on hand`:undefined,
+      sourceUrl:r.URL,sourceId:r.ID,source:src});
+    if(comps.length) d.components=comps;
+    const ex=D.parts.find(p=>p.id===id||(p.sourceId&&p.sourceId===r.ID));
+    (ex?out.existing:out.recs).push({path:"parts/"+id,data:d,cols:[id,name,site,String(qty),ms.map(m=>m.name).join(", ")||"Not linked"]}); });
+  out.notes.push(`${rows.length} rows: ${linked} part(s) linked to machines${out.skipped?`; rows marked [delete] or [NOT IN USE] are skipped`:""}`);
+  if(unres.size) out.warns.push(`${unres.size} asset name(s) aren't in NVAMP, so those links are left out (import the assets first): ${[...unres].slice(0,8).join(", ")}${unres.size>8?"…":""}`);
+  return out; }
+function mxBuildWOs(rows,ctry){
+  const out={recs:[],existing:[],skipped:0,warns:[],notes:[],sites:new Set()}; const find=mxResolver(), unres=new Set(), src="MaintainX work orders export "+iso(today);
+  const ST={DONE:"Completed",COMPLETED:"Completed",OPEN:"Open","IN PROGRESS":"In progress","IN_PROGRESS":"In progress","ON HOLD":"On hold","ON_HOLD":"On hold"};
+  const PR={CRITICAL:"Critical",URGENT:"Critical",HIGH:"High",MEDIUM:"Medium",LOW:"Low"}; let grp=0, none=0;
+  rows.forEach(r=>{ if(!r.ID||!r.Title){ out.skipped++; return; }
+    const id=`MX-${ctry}-${mxId(r.ID)}`, h=find(r.Asset,r["Asset ID"]), m=h&&h.m; if(r.Asset&&!h) unres.add(r.Asset); if(h&&h.group) grp++; if(!r.Asset) none++;
+    const status=ST[String(r.Status).toUpperCase()]||"Open", created=mxDate(r["Created on"])||iso(today);
+    const w=mxClean({type:/prevent/i.test(r["Work Type"])?"PM":"CM",machineId:m?m.id:h&&h.group?h.group:"",machineLabel:m?undefined:h&&h.group?h.group+" (group)":r.Asset||"No asset",component:h&&h.comp?h.comp:null,
+      title:r.Title,priority:PR[String(r.Priority).toUpperCase()]||"Medium",assignee:mxList(r["Assigned to"]).join(", "),status,created,
+      due:mxDate(r["Due date"])||mxDate(r["Planned Start Date"])||created,started:mxDate(r["Started on"])||undefined,
+      completed:status==="Completed"?(mxDate(r["Completed on"])||mxDate(r["Last updated"])||created):null,completedByName:r["Completed by"],
+      notes:/^description left empty/i.test(r.Description)?"":r.Description,partsUsed:[],downtimeMin:0,pmPlanId:null,checklist:[],createdByName:r["Created by"],requestedBy:r["Requested by"],
+      category:mxList(r.Categories).join(", "),procedure:r["Procedure Name"],partsCost:mxNum(r["Total Parts Cost"])||undefined,
+      country:m?(m.country||countryOfSite(m.site)):h&&h.group&&h.members[0]?(h.members[0].country||ctry):ctry,sourceUrl:r.URL,sourceId:r.ID,source:src});
+    const ex=D.wos.find(x=>x.id===id);
+    (ex?out.existing:out.recs).push({path:"workorders/"+id,data:w,cols:[id,w.type,m?m.name:w.machineLabel,r.Title,status,created]}); });
+  const done=out.recs.filter(r=>r.data.status==="Completed").length;
+  out.notes.push(`${rows.length} rows: ${done} completed, ${out.recs.length-done} still open or on hold${grp?`; ${grp} are for a machine group (kept as the group)`:""}${none?`; ${none} have no asset`:""}`);
+  if(unres.size) out.warns.push(`${unres.size} asset name(s) aren't in NVAMP, so those work orders keep the name without a machine link (import the assets first): ${[...unres].slice(0,8).join(", ")}${unres.size>8?"…":""}`);
+  return out; }
+/* add the country (if new) and any new sites to settings before saving the records */
+async function mxPrepSettings(sites,ctry){ const s=D.settings; const have=new Set(s.sites||[]); const add=[...sites].filter(x=>x&&!have.has(x)); const data={};
+  const cs=s.countries; const known=cs&&typeof cs==="object"&&!Array.isArray(cs)?Object.keys(cs):[];
+  if(!known.includes(ctry)){ const ci=countryInfo(ctry); data.countries={[ctry]:{name:ci.name,currency:ci.currency,utc:ci.utc,status:"setup",operations:operations()}}; }
+  if(add.length){ data.sites=[...(s.sites||[]),...add]; data.siteCountry=Object.assign({},s.siteCountry||{}); data.siteTypes=Object.assign({},s.siteTypes||{}); add.forEach(x=>{ data.siteCountry[x]=ctry; data.siteTypes[x]="hub"; }); }
+  if(!Object.keys(data).length) return add; const ref=db.doc("settings/app"); const sn=await ref.get(); if(sn.exists) await ref.update(data); else await ref.set(data); return add; }
+async function mxWrite(recs,prog){ const items=recs.map(r=>({path:r.path,data:r.data}));
+  if(db.batchSet){ for(let i=0;i<items.length;i+=200){ await attempt(()=>db.batchSet(items.slice(i,i+200))); prog(Math.min(i+200,items.length)); } }
+  else for(let i=0;i<items.length;i++){ await attempt(()=>db.doc(items[i].path).set(items[i].data)); if(i%10===9||i===items.length-1) prog(i+1); } }
+function mxImport(kind){ if(!guard("settings")) return; const K=MX_KIND[kind]; let parsed=null, built=null;
+  const cs=D.settings.countries; const ctrys=[...new Set([...countryList(),...Object.keys(COUNTRY_DEFAULTS)])], c0=scopeCountry()||defCountry();
+  const heads=kind==="assets"?["ID","Name","Type","Site","Status","Components"]:kind==="parts"?["ID","Name","Site","Qty","Machines"]:["ID","Type","Machine","Title","Status","Created"];
+  modal(`<h3>Import ${K.title} from MaintainX</h3>
+  <p class="small">Upload the CSV from <b>${esc(K.what)}</b>. It's read with the same rules used to load Singapore. Nothing is saved until you check the preview and click Import, and records already in NVAMP are skipped, never overwritten.${kind!=="assets"?` Import assets first so ${K.title} link to their machines.`:""}</p>
+  <div class="form"><label>Country<select id="mxC">${ctrys.map(c=>`<option value="${esc(c)}" ${c===c0?"selected":""}>${esc(countryInfo(c).name)} (${esc(c)})</option>`).join("")}</select></label>
+  ${kind!=="wos"?`<label>Operation, when the equipment type doesn't decide it<select id="mxO">${opts(operations(),operations()[0])}</select></label>`:""}
+  <label class="full">CSV file<input type="file" accept=".csv,text/csv" id="mxF"></label></div>
+  <div id="mxP" class="small muted">Choose the file to see what will be imported.</div>
+  <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="mxGo" disabled>Import</button></div>`,md=>{
+    const P=md.querySelector("#mxP"), go=md.querySelector("#mxGo"), cSel=md.querySelector("#mxC"), oSel=md.querySelector("#mxO");
+    const draw=()=>{ if(!parsed) return; const ctry=cSel.value, op0=oSel?oSel.value:operations()[0];
+      built=kind==="assets"?mxBuildAssets(parsed.rows,ctry,op0):kind==="parts"?mxBuildParts(parsed.rows,ctry,op0):mxBuildWOs(parsed.rows,ctry);
+      const newSites=[...built.sites].filter(x=>!(D.settings.sites||[]).includes(x));
+      const lines=built.notes.concat(newSites.length?[`New site(s) ${newSites.join(", ")} will be added to ${countryInfo(ctry).name}`]:[]).concat(built.warns);
+      P.innerHTML=`<div class="banner small"><b>${built.recs.length}</b> new ${esc(K.title)} to import${built.existing.length?` · ${built.existing.length} already in NVAMP (skipped)`:""}${built.skipped?` · ${built.skipped} row(s) skipped`:""}</div>
+      ${lines.map(n=>`<div class="small" style="margin:4px 0">• ${esc(n)}</div>`).join("")}
+      ${built.recs.length?`<div class="tablewrap" style="max-height:260px;overflow:auto;margin-top:8px"><table><tr>${heads.map(h=>`<th>${h}</th>`).join("")}</tr>${built.recs.slice(0,200).map(r=>`<tr>${r.cols.map(c=>`<td class="small">${esc(c)}</td>`).join("")}</tr>`).join("")}${built.recs.length>200?`<tr><td colspan="${heads.length}" class="small muted">…and ${built.recs.length-200} more</td></tr>`:""}</table></div>`:""}`;
+      go.disabled=!built.recs.length; go.textContent=built.recs.length?`Import ${built.recs.length} ${K.title}`:"Import"; };
+    md.querySelector("#mxF").onchange=e=>{ const fl=e.target.files[0]; if(!fl) return; const rd=new FileReader();
+      rd.onload=()=>{ parsed=mxRows(rd.result); const miss=K.need.filter(n=>!parsed.head.includes(n));
+        if(!parsed.rows.length||miss.length){ parsed=null; built=null; go.disabled=true; go.textContent="Import"; P.innerHTML=`<div class="banner small">This doesn't look like a MaintainX ${esc(K.title)} export${miss.length?` (missing column${miss.length>1?"s":""}: ${esc(miss.join(", "))})`:""}.</div>`; return; }
+        draw(); }; rd.readAsText(fl); };
+    cSel.onchange=draw; if(oSel) oSel.onchange=draw;
+    go.onclick=busy(go,async()=>{ if(!built||!built.recs.length) return; if(!db){ toast("Not connected to shared data — nothing was saved"); return; }
+      const ctry=cSel.value, n=built.recs.length, label=go.textContent;
+      try{ const added=await mxPrepSettings(kind==="wos"?new Set():built.sites,ctry);
+        await mxWrite(built.recs,k=>{ go.textContent=`Importing… ${k} of ${n}`; });
+        const msg=`Imported ${n} ${K.title} from MaintainX (${countryInfo(ctry).name})`+(added.length?`; added site(s) ${added.join(", ")}`:"");
+        logAudit(msg,[{op:"import",path:K.coll,fields:{records:{from:null,to:`${n} new · ${built.existing.length} skipped (already in NVAMP)`}}}],"ok");
+        toast(msg); closeModal(); }
+      catch(e){ go.textContent=label; toast("Import stopped ("+((e&&e.code)||"error")+"). Records saved before the error are kept; import the same file again to add the rest."); } });
+  }); }
+document.addEventListener("click",e=>{ const b=e.target.closest&&e.target.closest("[data-mximport]"); if(b) mxImport(b.dataset.mximport); });
 
 /* ---------- TEAM & SETTINGS ---------- */
 function addPersonForm(){ if(!guard("settings")) return;

@@ -311,7 +311,8 @@
   },
   "/api/db/coll": {
    "get": {
-    "summary": "List the documents in a collection, optionally ordered and limited.",
+    "summary": "List a collection's documents; with `since`, only those changed after it plus the current ids.",
+    "description": "With `since` (ms, from a previous reply's `t`), only documents changed after it are\nreturned, plus `ids` \u2014 every id now in the collection \u2014 so the caller can drop deletions.\nLarge collections (thousands of work orders) then cost a few KB per change, not MBs.",
     "operationId": "get_coll_api_db_coll_get",
     "parameters": [
      {
@@ -366,6 +367,23 @@
        ],
        "title": "Limit"
       }
+     },
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer",
+         "minimum": 0
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Since"
+      }
      }
     ],
     "responses": {
@@ -375,6 +393,45 @@
        "application/json": {
         "schema": {
          "$ref": "#/components/schemas/CollOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/db/batch-set": {
+   "post": {
+    "summary": "Create or replace up to 500 documents in one call (used by CSV imports).",
+    "description": "Create or replace up to 500 documents in one call (CSV imports).",
+    "operationId": "batch_set_api_db_batch_set_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BatchSetIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ok"
         }
        }
       }
@@ -555,6 +612,22 @@
     ],
     "title": "AssetOut"
    },
+   "BatchSetIn": {
+    "properties": {
+     "sets": {
+      "items": {
+       "$ref": "#/components/schemas/DocItemPath"
+      },
+      "type": "array",
+      "title": "Sets"
+     }
+    },
+    "type": "object",
+    "required": [
+     "sets"
+    ],
+    "title": "BatchSetIn"
+   },
    "Body_upload_api_blob_post": {
     "properties": {
      "file": {
@@ -577,6 +650,31 @@
       },
       "type": "array",
       "title": "Docs"
+     },
+     "ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ids"
+     },
+     "t": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "T"
      }
     },
     "type": "object",
@@ -617,6 +715,25 @@
      "data"
     ],
     "title": "DocItem"
+   },
+   "DocItemPath": {
+    "properties": {
+     "path": {
+      "type": "string",
+      "title": "Path"
+     },
+     "data": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Data"
+     }
+    },
+    "type": "object",
+    "required": [
+     "path",
+     "data"
+    ],
+    "title": "DocItemPath"
    },
    "DocOut": {
     "properties": {

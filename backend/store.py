@@ -67,13 +67,28 @@ class MemoryStore:
         self.docs: dict[str, dict] = {}
         self.sigs: dict[str, int] = {}
         self.assets: dict[str, dict] = {}
+        self.utimes: dict[str, int] = {}
         self.lock = asyncio.Lock()
 
     async def close(self):
         pass
 
-    def _bump(self, coll: str):
+    def _bump(self, coll: str, path: str | None = None):
         self.sigs[coll] = self.sigs.get(coll, 0) + 1
+        if path:
+            self.utimes[path] = now_ms()
+
+    async def list_since(self, coll, since):
+        """Documents changed after `since` (ms), plus every id now in the collection."""
+        prefix = coll + "/"
+        ids, rows = [], []
+        for p, d in self.docs.items():
+            rest = p[len(prefix):]
+            if p.startswith(prefix) and "/" not in rest:
+                ids.append(rest)
+                if self.utimes.get(p, 0) > since:
+                    rows.append((rest, copy.deepcopy(d)))
+        return sorted(rows, key=lambda r: r[0]), sorted(ids)
 
     async def get_doc(self, path):
         d = self.docs.get(path)
@@ -89,19 +104,19 @@ class MemoryStore:
     async def set_doc(self, path, data, by=None):
         async with self.lock:
             self.docs[path] = copy.deepcopy(data)
-            self._bump(split_path(path)[0])
+            self._bump(split_path(path)[0], path)
 
     async def update_doc(self, path, patch, by=None):
         async with self.lock:
             if path not in self.docs:
                 raise NotFound(path)
             self.docs[path] = deep_merge(self.docs[path], copy.deepcopy(patch))
-            self._bump(split_path(path)[0])
+            self._bump(split_path(path)[0], path)
 
     async def delete_doc(self, path, by=None):
         async with self.lock:
             if self.docs.pop(path, None) is not None:
-                self._bump(split_path(path)[0])
+                self._bump(split_path(path)[0], path)
 
     async def all_sigs(self):
         return dict(self.sigs)
@@ -229,6 +244,18 @@ class MySQLStore:
         async with self.pool.acquire() as conn, conn.cursor() as cur:
             await cur.execute("SELECT coll, sig FROM coll_sig")
             return {r[0]: int(r[1]) for r in await cur.fetchall()}
+
+    async def list_since(self, coll, since):
+        """Documents changed after `since` (ms), plus every id now in the collection."""
+        async with self.pool.acquire() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "SELECT doc_id, body FROM docs WHERE coll=%s AND updated_at>%s ORDER BY doc_id",
+                (coll, int(since)),
+            )
+            rows = [(r[0], json.loads(r[1])) for r in await cur.fetchall()]
+            await cur.execute("SELECT doc_id FROM docs WHERE coll=%s ORDER BY doc_id", (coll,))
+            ids = [r[0] for r in await cur.fetchall()]
+        return rows, ids
 
     async def bulk_set(self, items, by=None):
         """Upsert many documents; commits in chunks so a large backup imports quickly."""

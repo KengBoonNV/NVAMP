@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from main import app  # noqa: E402
 
+if os.getenv("NVAMP_DEV_FILES"):  # optional: serve a folder of test CSVs at /_devfiles
+    app.mount("/_devfiles", StaticFiles(directory=os.environ["NVAMP_DEV_FILES"]), name="devfiles")
 app.mount("/", StaticFiles(directory=Path(__file__).resolve().parent.parent / "frontend", html=True), name="frontend")
 
 if __name__ == "__main__":

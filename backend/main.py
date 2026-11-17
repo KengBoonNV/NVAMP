@@ -141,6 +141,13 @@ class DocItem(BaseModel):
 
 class CollOut(BaseModel):
     docs: list[DocItem]
+    ids: list[str] | None = None
+    t: int | None = None
+
+
+class DocItemPath(BaseModel):
+    path: str
+    data: dict
 
 
 class Sigs(BaseModel):
@@ -261,10 +268,36 @@ async def get_doc(path: str = Query(...), v: Viewer = Depends(current_viewer)):
 @app.get("/api/db/coll", response_model=CollOut)
 async def get_coll(path: str = Query(...), orderBy: str | None = None, dir: str = "asc",
                    limit: int | None = Query(None, ge=1, le=5000),
+                   since: int | None = Query(None, ge=0),
                    v: Viewer = Depends(current_viewer)):
+    """With `since` (ms, from a previous reply's `t`), only documents changed after it are
+    returned, plus `ids` — every id now in the collection — so the caller can drop deletions.
+    Large collections (thousands of work orders) then cost a few KB per change, not MBs."""
     _check_path(path, False)
+    t = int(time.time() * 1000)
+    if since is not None and not orderBy and not limit:
+        rows, ids = await STORE.list_since(path, since)
+        return {"docs": [{"id": i, "data": d} for i, d in rows], "ids": ids, "t": t}
     rows = await STORE.list_coll(path, orderBy, dir == "desc", limit)
-    return {"docs": [{"id": i, "data": d} for i, d in rows]}
+    return {"docs": [{"id": i, "data": d} for i, d in rows], "t": t}
+
+
+class BatchSetIn(BaseModel):
+    sets: list[DocItemPath]
+
+
+@app.post("/api/db/batch-set", response_model=Ok)
+async def batch_set(body: BatchSetIn, v: Viewer = Depends(current_viewer)):
+    """Create or replace up to 500 documents in one call (CSV imports)."""
+    if len(body.sets) > 500:
+        raise HTTPException(400, "at most 500 documents per batch")
+    items = []
+    for it in body.sets:
+        _check_path(it.path, True)
+        _check_write(it.path, v)
+        items.append((it.path, _check_body(it.data)))
+    await STORE.bulk_set(items, v.id)
+    return {"ok": True}
 
 
 @app.put("/api/db/doc", response_model=Ok)
