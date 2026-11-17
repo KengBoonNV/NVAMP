@@ -1,7 +1,10 @@
 # NVAMP backend. Built from the repo root. EXPOSE 8000, GET /health, API under /api.
 FROM python:3.12-slim
+# Security updates. The explicit zlib1g upgrade also changes this layer's cache key, so a
+# cached layer from before Debian's fix (CVE-2026-85091) can't be reused.
 RUN apt-get update \
  && apt-get upgrade -y \
+ && apt-get install -y --only-upgrade zlib1g \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt .
