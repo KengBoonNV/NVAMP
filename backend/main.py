@@ -47,7 +47,7 @@ app = FastAPI(title="NVAMP", version="1.0", lifespan=lifespan)
 
 import integrations  # noqa: E402  (API-key routes under /api/integrations, outside SSO)
 
-app.include_router(integrations.build_router(lambda: STORE))
+app.include_router(integrations.build_router(lambda: STORE, lambda aid: _blob_get(aid)))
 
 
 # ---------------------------------------------------------------- identity
@@ -473,6 +473,117 @@ async def import_backup(request: Request, v: Viewer = Depends(current_viewer)):
         counts[coll] = len(docs or [])
     await STORE.bulk_set(items, v.id)
     return {"ok": True, "documents": len(items), "counts": counts}
+
+
+# ---------------------------------------------------------------- routes: copy files from another environment
+# On the TARGET (production): NVAMP_COPY_SOURCE_URL = the source environment's URL (dev) and
+# NVAMP_COPY_SOURCE_KEY = the source's NVAMP_EXPORT_KEY. Files keep their ids, so records imported
+# from a backup point at them unchanged. Owner only; driven in batches from /import.html.
+
+class CopyStatus(BaseModel):
+    configured: bool
+    source: str | None = None
+    total: int = 0
+    present: int = 0
+    missing: int = 0
+    missingBytes: int = 0
+    error: str | None = None
+
+
+class CopyFailure(BaseModel):
+    id: str
+    error: str
+
+
+class CopyRun(BaseModel):
+    copied: int
+    copiedBytes: int
+    failed: list[CopyFailure]
+    remaining: int
+
+
+_COPY_FAILED: dict[str, str] = {}
+
+
+def _copy_source():
+    url = (os.getenv("NVAMP_COPY_SOURCE_URL") or "").strip().rstrip("/")
+    key = (os.getenv("NVAMP_COPY_SOURCE_KEY") or "").strip()
+    return (url, key) if url.startswith(("https://", "http://")) and len(key) >= 24 else (None, None)
+
+
+def _fetch(url: str, key: str, limit: int):
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, headers={"X-API-Key": key, "User-Agent": "nvamp-file-copy"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, r.read(limit + 1)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(2000)
+
+
+async def _source_files():
+    url, key = _copy_source()
+    if not url:
+        raise HTTPException(503, "File copy is not configured on this environment (NVAMP_COPY_SOURCE_URL / NVAMP_COPY_SOURCE_KEY)")
+    import json
+    try:
+        status, body = await run_in_threadpool(_fetch, url + "/api/integrations/export/files", key, 20 * 1024 * 1024)
+    except Exception as e:  # network, DNS, timeout
+        raise HTTPException(502, f"Could not reach the source environment: {e.__class__.__name__}")
+    if status == 401 and body.strip() in (b"{}", b""):
+        raise HTTPException(502, "The source environment's sign-in blocked the call: add /api/integrations/ as a Public path there")
+    if status != 200:
+        raise HTTPException(502, f"The source environment answered HTTP {status}: {body[:200].decode('utf-8', 'replace')}")
+    return url, key, json.loads(body)["files"]
+
+
+@app.get("/api/admin/copy-files", response_model=CopyStatus)
+async def copy_files_status(v: Viewer = Depends(current_viewer)):
+    """How many of the source environment's uploaded files are already here."""
+    if not v.isOwner:
+        raise HTTPException(403, "Only an NVAMP owner can copy files")
+    url, _ = _copy_source()
+    if not url:
+        return {"configured": False}
+    try:
+        url, _, files = await _source_files()
+    except HTTPException as e:
+        return {"configured": True, "source": url, "error": e.detail}
+    missing = [f for f in files if not await STORE.get_asset(f["id"])]
+    return {"configured": True, "source": url, "total": len(files), "present": len(files) - len(missing),
+            "missing": len(missing), "missingBytes": sum(int(f["sizeBytes"]) for f in missing)}
+
+
+@app.post("/api/admin/copy-files/run", response_model=CopyRun)
+async def copy_files_run(limit: int = Query(10, ge=1, le=50), v: Viewer = Depends(current_viewer)):
+    """Copy the next `limit` missing files from the source environment, keeping their ids."""
+    if not v.isOwner:
+        raise HTTPException(403, "Only an NVAMP owner can copy files")
+    url, key, files = await _source_files()
+    todo = [f for f in files if f["id"] not in _COPY_FAILED and re.fullmatch(r"[0-9a-f]{32}", f["id"]) and not await STORE.get_asset(f["id"])]
+    copied, nbytes, failed = 0, 0, []
+    for f in todo[:limit]:
+        fid = f["id"]
+        try:
+            status, data = await run_in_threadpool(_fetch, f"{url}/api/integrations/export/files/{fid}", key, MAX_FILE)
+            if status != 200:
+                raise ValueError(f"source answered HTTP {status}")
+            if len(data) > MAX_FILE:
+                raise ValueError("file is over 20 MB")
+            ctype = _sniff(data)
+            if ctype not in ALLOWED_TYPES:
+                raise ValueError("not a PDF, JPG, PNG or WebP file")
+            await _blob_put(fid, data, ctype)
+            await STORE.put_asset({"id": fid, "content_type": ctype, "size_bytes": len(data), "filename": (f.get("filename") or "")[:255],
+                                   "created_by": f.get("createdBy"), "created_at": int(f.get("createdAt") or time.time() * 1000)})
+            copied += 1
+            nbytes += len(data)
+        except Exception as e:
+            _COPY_FAILED[fid] = str(e)[:200]
+            failed.append({"id": fid, "error": _COPY_FAILED[fid]})
+    remaining = max(0, len(todo) - copied - len(failed))
+    return {"copied": copied, "copiedBytes": nbytes, "failed": failed, "remaining": remaining}
 
 
 @app.exception_handler(HTTPException)

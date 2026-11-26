@@ -83,10 +83,10 @@ class MachinesOut(BaseModel):
     machines: list[MachineOut]
 
 
-def _check_key(request: Request):
-    keys = [k.strip() for k in os.getenv("NVAMP_TICKETS_API_KEY", "").split(",") if len(k.strip()) >= 24]
+def _check_key(request: Request, var: str = "NVAMP_TICKETS_API_KEY"):
+    keys = [k.strip() for k in os.getenv(var, "").split(",") if len(k.strip()) >= 24]
     if not keys:
-        raise HTTPException(503, "Ticket integration is not configured on this NVAMP environment")
+        raise HTTPException(503, "This integration is not configured on this NVAMP environment")
     got = (request.headers.get("x-api-key") or "").strip()
     auth = request.headers.get("authorization") or ""
     if not got and auth.lower().startswith("bearer "):
@@ -117,8 +117,42 @@ TICKET_STATUS_LABEL = {"New": "Waiting for review", "Accepted": "Work order open
                        "Rejected": "Closed: not a machine fault", "Closed": "Closed"}
 
 
-def build_router(get_store: Callable[[], Any]) -> APIRouter:
+class ExportFile(BaseModel):
+    id: str
+    contentType: str
+    sizeBytes: int
+    filename: str | None = None
+    createdBy: str | None = None
+    createdAt: int
+
+
+class ExportFilesOut(BaseModel):
+    files: list[ExportFile]
+
+
+def build_router(get_store: Callable[[], Any], blob_get: Callable[[str], Any] | None = None) -> APIRouter:
     r = APIRouter(prefix="/api/integrations", tags=["integrations"])
+
+    # File export, for copying uploads to another NVAMP environment (dev → production).
+    # Enabled only where NVAMP_EXPORT_KEY is set; remove that key once the copy is done.
+    @r.get("/export/files", response_model=ExportFilesOut, summary="List every uploaded file (needs NVAMP_EXPORT_KEY).")
+    async def export_files(request: Request):
+        _check_key(request, "NVAMP_EXPORT_KEY")
+        return {"files": [{"id": a["id"], "contentType": a["content_type"], "sizeBytes": int(a["size_bytes"]),
+                           "filename": a.get("filename"), "createdBy": a.get("created_by"), "createdAt": int(a["created_at"])}
+                          for a in await get_store().list_assets()]}
+
+    @r.get("/export/files/{asset_id}", summary="Download one uploaded file (needs NVAMP_EXPORT_KEY).",
+           responses={200: {"content": {"application/octet-stream": {}}}})
+    async def export_file(asset_id: str, request: Request):
+        _check_key(request, "NVAMP_EXPORT_KEY")
+        if not re.fullmatch(r"[0-9a-f]{32}", asset_id):
+            raise HTTPException(404, "not found")
+        meta = await get_store().get_asset(asset_id)
+        if not meta or blob_get is None:
+            raise HTTPException(404, "not found")
+        from fastapi.responses import Response
+        return Response(await blob_get(asset_id), media_type=meta["content_type"], headers={"X-Content-Type-Options": "nosniff"})
 
     async def live_machines():
         return [(i, d) for i, d in await get_store().list_coll("machines") if d.get("status") != "Decommissioned"]

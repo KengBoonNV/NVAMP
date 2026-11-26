@@ -6,6 +6,78 @@
   "description": "NVAMP maintenance platform API: a document store, file uploads and identity behind Google SSO. Routes under /api/integrations use an API key (X-API-Key) instead of Google SSO."
  },
  "paths": {
+  "/api/integrations/export/files": {
+   "get": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "List every uploaded file (needs NVAMP_EXPORT_KEY).",
+    "operationId": "export_files_api_integrations_export_files_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ExportFilesOut"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKey": []
+     }
+    ]
+   }
+  },
+  "/api/integrations/export/files/{asset_id}": {
+   "get": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Download one uploaded file (needs NVAMP_EXPORT_KEY).",
+    "operationId": "export_file_api_integrations_export_files__asset_id__get",
+    "parameters": [
+     {
+      "name": "asset_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Asset Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       },
+       "application/octet-stream": {}
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKey": []
+     }
+    ]
+   }
+  },
   "/api/integrations/machines": {
    "get": {
     "tags": [
@@ -727,6 +799,68 @@
      }
     }
    }
+  },
+  "/api/admin/copy-files": {
+   "get": {
+    "summary": "Owner only: how many of the source environment's files are already here.",
+    "description": "How many of the source environment's uploaded files are already here.",
+    "operationId": "copy_files_status_api_admin_copy_files_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CopyStatus"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/admin/copy-files/run": {
+   "post": {
+    "summary": "Owner only: copy the next batch of missing files from the source environment.",
+    "description": "Copy the next `limit` missing files from the source environment, keeping their ids.",
+    "operationId": "copy_files_run_api_admin_copy_files_run_post",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 10,
+       "title": "Limit"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CopyRun"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -830,6 +964,110 @@
     ],
     "title": "CollOut"
    },
+   "CopyFailure": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "error": {
+      "type": "string",
+      "title": "Error"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "error"
+    ],
+    "title": "CopyFailure"
+   },
+   "CopyRun": {
+    "properties": {
+     "copied": {
+      "type": "integer",
+      "title": "Copied"
+     },
+     "copiedBytes": {
+      "type": "integer",
+      "title": "Copiedbytes"
+     },
+     "failed": {
+      "items": {
+       "$ref": "#/components/schemas/CopyFailure"
+      },
+      "type": "array",
+      "title": "Failed"
+     },
+     "remaining": {
+      "type": "integer",
+      "title": "Remaining"
+     }
+    },
+    "type": "object",
+    "required": [
+     "copied",
+     "copiedBytes",
+     "failed",
+     "remaining"
+    ],
+    "title": "CopyRun"
+   },
+   "CopyStatus": {
+    "properties": {
+     "configured": {
+      "type": "boolean",
+      "title": "Configured"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Source"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total",
+      "default": 0
+     },
+     "present": {
+      "type": "integer",
+      "title": "Present",
+      "default": 0
+     },
+     "missing": {
+      "type": "integer",
+      "title": "Missing",
+      "default": 0
+     },
+     "missingBytes": {
+      "type": "integer",
+      "title": "Missingbytes",
+      "default": 0
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     }
+    },
+    "type": "object",
+    "required": [
+     "configured"
+    ],
+    "title": "CopyStatus"
+   },
    "DocIn": {
     "properties": {
      "data": {
@@ -911,6 +1149,72 @@
      "exists"
     ],
     "title": "DocOut"
+   },
+   "ExportFile": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "contentType": {
+      "type": "string",
+      "title": "Contenttype"
+     },
+     "sizeBytes": {
+      "type": "integer",
+      "title": "Sizebytes"
+     },
+     "filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Filename"
+     },
+     "createdBy": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Createdby"
+     },
+     "createdAt": {
+      "type": "integer",
+      "title": "Createdat"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "contentType",
+     "sizeBytes",
+     "createdAt"
+    ],
+    "title": "ExportFile"
+   },
+   "ExportFilesOut": {
+    "properties": {
+     "files": {
+      "items": {
+       "$ref": "#/components/schemas/ExportFile"
+      },
+      "type": "array",
+      "title": "Files"
+     }
+    },
+    "type": "object",
+    "required": [
+     "files"
+    ],
+    "title": "ExportFilesOut"
    },
    "HTTPValidationError": {
     "properties": {

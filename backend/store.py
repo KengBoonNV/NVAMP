@@ -134,6 +134,9 @@ class MemoryStore:
     async def delete_asset(self, asset_id):
         self.assets.pop(asset_id, None)
 
+    async def list_assets(self):
+        return sorted((dict(a) for a in self.assets.values()), key=lambda a: a["created_at"])
+
 
 class MySQLStore:
     """OceanBase speaks MySQL wire: asyncmy with %s placeholders."""
@@ -298,3 +301,9 @@ class MySQLStore:
     async def delete_asset(self, asset_id):
         async with self.pool.acquire() as conn, conn.cursor() as cur:
             await cur.execute("DELETE FROM assets WHERE id=%s", (asset_id,))
+
+    async def list_assets(self):
+        async with self.pool.acquire() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT id, content_type, size_bytes, filename, created_by, created_at FROM assets ORDER BY created_at")
+            rows = await cur.fetchall()
+        return [dict(zip(["id", "content_type", "size_bytes", "filename", "created_by", "created_at"], r)) for r in rows]

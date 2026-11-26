@@ -25,8 +25,15 @@
   <p><input type="file" id="f" accept=".json,application/json"></p>
   <button id="go" disabled>Import</button>
   <pre id="out" hidden></pre>
-  <p style="margin-top:16px"><a href="/">← Back to NVAMP</a></p>
-</div></main>
+</div>
+<div class="card" style="margin-top:16px" id="cp" hidden>
+  <h1>Copy photos and files</h1>
+  <p id="cpLead">Copies uploaded photos, signatures and documents from the source environment, keeping their ids, so the records you imported show them. Files already here are skipped. Owners only.</p>
+  <pre id="cpOut">Checking…</pre>
+  <button id="cpGo" disabled>Copy files</button>
+</div>
+<p style="margin-top:16px"><a href="/">← Back to NVAMP</a></p>
+</main>
 <script>
   const f = document.getElementById("f"), go = document.getElementById("go"), out = document.getElementById("out");
   f.onchange = () => { go.disabled = !f.files.length; };
@@ -42,6 +49,34 @@
     } catch (e) { out.textContent = "Not imported: " + e.message; }
     go.disabled = false;
   };
+
+  /* copy files from another environment (shown only where it is configured) */
+  const cp = document.getElementById("cp"), cpOut = document.getElementById("cpOut"), cpGo = document.getElementById("cpGo");
+  const mb = n => (n / 1048576).toFixed(1) + " MB";
+  async function cpStatus() {
+    const r = await fetch("/api/admin/copy-files"); const j = await r.json().catch(() => ({}));
+    if (!r.ok) { if (r.status === 403) return; cp.hidden = false; cpOut.textContent = j.detail || ("HTTP " + r.status); return; }
+    if (!j.configured) return;
+    cp.hidden = false;
+    if (j.error) { cpOut.textContent = "Source: " + j.source + "\n" + j.error; cpGo.disabled = true; return; }
+    cpOut.textContent = "Source: " + j.source + "\n" + j.total + " files there · " + j.present + " already here · " + j.missing + " to copy (" + mb(j.missingBytes) + ")";
+    cpGo.disabled = !j.missing; cpGo.textContent = j.missing ? "Copy " + j.missing + " files" : "All files copied";
+  }
+  cpGo.onclick = async () => {
+    cpGo.disabled = true; let copied = 0, bytes = 0; const failed = [];
+    try {
+      for (;;) {
+        const r = await fetch("/api/admin/copy-files/run?limit=10", { method: "POST" }); const j = await r.json().catch(() => ({}));
+        if (!r.ok) { failed.push({ id: "-", error: j.detail || ("HTTP " + r.status) }); break; }
+        copied += j.copied; bytes += j.copiedBytes; failed.push(...j.failed);
+        cpOut.textContent = "Copying… " + copied + " copied (" + mb(bytes) + "), " + j.remaining + " left" + (failed.length ? ", " + failed.length + " failed" : "");
+        if (!j.remaining || (!j.copied && !j.failed.length)) break;
+      }
+    } catch (e) { failed.push({ id: "-", error: e.message }); }
+    await cpStatus();
+    cpOut.textContent += "\n\nThis run: " + copied + " copied (" + mb(bytes) + ")" + (failed.length ? "\nNot copied:\n" + failed.map(f => "  " + f.id + ": " + f.error).join("\n") : "");
+  };
+  cpStatus();
 </script>
 </body>
 </html>
