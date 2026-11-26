@@ -45,6 +45,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="NVAMP", version="1.0", lifespan=lifespan)
 
+import integrations  # noqa: E402  (API-key routes under /api/integrations, outside SSO)
+
+app.include_router(integrations.build_router(lambda: STORE))
+
 
 # ---------------------------------------------------------------- identity
 

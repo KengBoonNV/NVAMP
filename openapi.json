@@ -3,9 +3,156 @@
  "info": {
   "title": "NVAMP",
   "version": "1.0",
-  "description": "NVAMP maintenance platform API: a document store, file uploads and identity behind Google SSO."
+  "description": "NVAMP maintenance platform API: a document store, file uploads and identity behind Google SSO. Routes under /api/integrations use an API key (X-API-Key) instead of Google SSO."
  },
  "paths": {
+  "/api/integrations/machines": {
+   "get": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Machines that tickets can be raised against (live ones only).",
+    "operationId": "machines_api_integrations_machines_get",
+    "parameters": [
+     {
+      "name": "country",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Country"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachinesOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKey": []
+     }
+    ]
+   }
+  },
+  "/api/integrations/tickets": {
+   "post": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Raise a support ticket (same as the NVAMP Raise ticket form).",
+    "operationId": "raise_ticket_api_integrations_tickets_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TicketIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TicketOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKey": []
+     }
+    ]
+   }
+  },
+  "/api/integrations/tickets/{tid}": {
+   "get": {
+    "tags": [
+     "integrations"
+    ],
+    "summary": "Where a ticket is now: reviewed, work order opened, closed.",
+    "operationId": "ticket_status_api_integrations_tickets__tid__get",
+    "parameters": [
+     {
+      "name": "tid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Tid"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TicketStatusOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKey": []
+     }
+    ]
+   }
+  },
   "/health": {
    "get": {
     "summary": "Readiness probe; returns ok when the service is up.",
@@ -851,6 +998,95 @@
     ],
     "title": "ImportOut"
    },
+   "MachineOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Type"
+     },
+     "site": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Site"
+     },
+     "country": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Country"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     },
+     "modules": {
+      "items": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Modules",
+      "default": []
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "name"
+    ],
+    "title": "MachineOut"
+   },
+   "MachinesOut": {
+    "properties": {
+     "machines": {
+      "items": {
+       "$ref": "#/components/schemas/MachineOut"
+      },
+      "type": "array",
+      "title": "Machines"
+     }
+    },
+    "type": "object",
+    "required": [
+     "machines"
+    ],
+    "title": "MachinesOut"
+   },
    "Ok": {
     "properties": {
      "ok": {
@@ -957,6 +1193,267 @@
     ],
     "title": "Sigs"
    },
+   "TicketIn": {
+    "properties": {
+     "machine": {
+      "type": "string",
+      "title": "Machine",
+      "description": "Machine ID (e.g. SG-SG-DWS-PDS-04-SR) or its NVAMP name (e.g. Static DWS 04)"
+     },
+     "state": {
+      "type": "string",
+      "title": "State",
+      "description": "How the machine is running: Running, Degraded (running with issues) or Down"
+     },
+     "description": {
+      "type": "string",
+      "maxLength": 4000,
+      "minLength": 5,
+      "title": "Description",
+      "description": "What's wrong, in the reporter's words"
+     },
+     "reporterName": {
+      "type": "string",
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Reportername",
+      "description": "Who reported it in Chat"
+     },
+     "reporterEmail": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reporteremail",
+      "description": "Reporter's company email; links the ticket to their NVAMP account"
+     },
+     "country": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Country",
+      "description": "Country code (SG, MY\u2026) to disambiguate a machine name used in several countries"
+     },
+     "module": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Module",
+      "description": "Module / sub-system code or name, if known"
+     },
+     "errorCode": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 120
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Errorcode"
+     },
+     "contact": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Contact",
+      "description": "Phone or other contact for follow-up"
+     },
+     "source": {
+      "type": "string",
+      "maxLength": 40,
+      "title": "Source",
+      "description": "Short source tag; default gchat",
+      "default": "gchat"
+     },
+     "sourceSpace": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sourcespace",
+      "description": "Chat space or channel name"
+     },
+     "sourceUrl": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 1000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sourceurl",
+      "description": "Link to the Chat message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "machine",
+     "state",
+     "description",
+     "reporterName"
+    ],
+    "title": "TicketIn"
+   },
+   "TicketOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "machineId": {
+      "type": "string",
+      "title": "Machineid"
+     },
+     "machineName": {
+      "type": "string",
+      "title": "Machinename"
+     },
+     "site": {
+      "type": "string",
+      "title": "Site"
+     },
+     "country": {
+      "type": "string",
+      "title": "Country"
+     },
+     "state": {
+      "type": "string",
+      "title": "State"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Url"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "status",
+     "machineId",
+     "machineName",
+     "site",
+     "country",
+     "state"
+    ],
+    "title": "TicketOut"
+   },
+   "TicketStatusOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "title": "Id"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "statusLabel": {
+      "type": "string",
+      "title": "Statuslabel"
+     },
+     "machineId": {
+      "type": "string",
+      "title": "Machineid"
+     },
+     "raisedAt": {
+      "type": "string",
+      "title": "Raisedat"
+     },
+     "workOrderId": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workorderid"
+     },
+     "workOrderStatus": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Workorderstatus"
+     },
+     "closedAt": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Closedat"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Url"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "status",
+     "statusLabel",
+     "machineId",
+     "raisedAt"
+    ],
+    "title": "TicketStatusOut"
+   },
    "ValidationError": {
     "properties": {
      "loc": {
@@ -1034,6 +1531,13 @@
      "canWrite"
     ],
     "title": "Viewer"
+   }
+  },
+  "securitySchemes": {
+   "ApiKey": {
+    "type": "apiKey",
+    "in": "header",
+    "name": "X-API-Key"
    }
   }
  }
