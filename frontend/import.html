@@ -37,16 +37,45 @@
 <script>
   const f = document.getElementById("f"), go = document.getElementById("go"), out = document.getElementById("out");
   f.onchange = () => { go.disabled = !f.files.length; };
+  /* The backup is sent in small batches (each a valid mini-backup), so no single request runs
+     long enough for the platform's gateway to time it out. Records are upserted by id, so a
+     batch that fails can simply be imported again. */
+  const BATCH = 250;
   go.onclick = async () => {
-    go.disabled = true; out.hidden = false; out.textContent = "Importing…";
+    go.disabled = true; out.hidden = false; out.textContent = "Reading the file…";
+    const counts = {}; let sent = 0, total = 0;
     try {
-      const text = await f.files[0].text();
-      const r = await fetch("/api/admin/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: text });
-      const j = await r.json().catch(() => ({}));
-      out.textContent = r.ok
-        ? "Imported " + j.documents + " records.\n" + Object.entries(j.counts).map(([k, v]) => k + ": " + v).join("\n")
-        : "Not imported: " + (j.detail || ("HTTP " + r.status));
-    } catch (e) { out.textContent = "Not imported: " + e.message; }
+      const bk = JSON.parse(await f.files[0].text());
+      if (!bk || bk.app !== "NVAMP" || typeof bk.collections !== "object") throw new Error("not an NVAMP backup file");
+      const batches = [];
+      for (const [c, docs] of Object.entries(bk.collections)) {
+        const list = Array.isArray(docs) ? docs : [];
+        if (c === "audit") {  // a user's activity root + its entries, split by entry count
+          for (const d of list) {
+            const es = d.entries || [];
+            for (let i = 0; i < Math.max(1, es.length); i += BATCH)
+              batches.push({ c, n: Math.min(BATCH, es.length - i) || 0, docs: [{ id: d.id, data: d.data, entries: es.slice(i, i + BATCH) }] });
+          }
+        } else {
+          for (let i = 0; i < list.length; i += BATCH) batches.push({ c, n: Math.min(BATCH, list.length - i), docs: list.slice(i, i + BATCH) });
+        }
+      }
+      total = batches.reduce((a, b) => a + (b.c === "audit" ? b.n + 1 : b.n), 0);
+      for (const b of batches) {
+        let r, j, tries = 0;
+        do {
+          r = await fetch("/api/admin/import", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ app: "NVAMP", format: bk.format || 1, collections: { [b.c]: b.docs } }) });
+          j = await r.json().catch(() => ({}));
+        } while (!r.ok && r.status >= 500 && ++tries < 3 && await new Promise(res => setTimeout(res, 2000 * tries)) === undefined);
+        if (!r.ok) throw new Error((j.detail || ("HTTP " + r.status)) + " while importing " + b.c);
+        sent += j.documents; Object.entries(j.counts || {}).forEach(([k, v]) => counts[k] = (counts[k] || 0) + v);
+        out.textContent = "Importing… " + sent + " of about " + total + " records";
+      }
+      out.textContent = "Imported " + sent + " records.\n" + Object.entries(counts).map(([k, v]) => k + ": " + v).join("\n");
+    } catch (e) {
+      out.textContent = "Stopped: " + e.message + "\n" + sent + " records were saved before that. Import the same file again to finish; records already saved are simply replaced.";
+    }
     go.disabled = false;
   };
 
